@@ -1,7 +1,6 @@
 import express from "express";
 import { storage } from "../storage.js";
 import * as schema from "../../shared/schema.js";
-import { eq, desc, and, or, like, sql } from "drizzle-orm";
 
 const router = express.Router();
 
@@ -150,84 +149,14 @@ router.get("/special-offers", async (req, res) => {
   }
 });
 
-// إنشاء طلب جديد
-router.post("/orders", async (req, res) => {
-  try {
-    const orderData = req.body;
-    
-    // توليد رقم طلب فريد
-    const orderNumber = `ORD${Date.now()}${Math.floor(Math.random() * 1000)}`;
-    
-    const newOrderData = {
-      ...orderData,
-      orderNumber,
-      status: "pending",
-      paymentStatus: "pending"
-    };
-
-    const [newOrder] = await db.insert(schema.orders)
-      .values(newOrderData)
-      .returning();
-
-    // إضافة تتبع للطلب
-    await db.insert(schema.orderTracking).values({
-      orderId: newOrder.id,
-      status: "pending",
-      message: "تم إنشاء الطلب بنجاح",
-      createdByType: 'system'
-    });
-
-    // إشعار المطعم (يمكن إضافة WebSocket هنا)
-    
-    res.json(newOrder);
-  } catch (error) {
-    console.error("خطأ في إنشاء الطلب:", error);
-    res.status(500).json({ error: "خطأ في الخادم" });
-  }
-});
-
-// تتبع الطلب
-router.get("/orders/:id/track", async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    const order = await db.query.orders.findFirst({
-      where: eq(schema.orders.id, id),
-    });
-
-    if (!order) {
-      return res.status(404).json({ error: "الطلب غير موجود" });
-    }
-
-    // جلب تتبع الطلب
-    const tracking = await db.query.orderTracking.findMany({
-      where: eq(schema.orderTracking.orderId, id),
-      orderBy: desc(schema.orderTracking.timestamp!)
-    });
-
-    res.json({
-      order,
-      tracking
-    });
-  } catch (error) {
-    console.error("خطأ في تتبع الطلب:", error);
-    res.status(500).json({ error: "خطأ في الخادم" });
-  }
-});
-
 // جلب إعدادات النظام العامة
 router.get("/settings", async (req, res) => {
   try {
-    const settings = await db.query.systemSettings.findMany({
-      where: eq(schema.systemSettings.isPublic, true)
-    });
-    
-    // تحويل الإعدادات إلى كائن
-    const settingsObject = settings.reduce((acc, setting) => {
+    const allSettings = await storage.getUiSettings();
+    const settingsObject = allSettings.reduce((acc: any, setting: any) => {
       acc[setting.key] = setting.value;
       return acc;
     }, {} as any);
-    
     res.json(settingsObject);
   } catch (error) {
     console.error("خطأ في جلب الإعدادات:", error);

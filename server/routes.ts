@@ -56,8 +56,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth Routes
   app.use("/api/auth", authRoutes);
 
-  // Admin and Advanced Routes
-  app.use("/api/admin", adminRoutes);
+  // Advanced Routes (admin routes registered below with other route mounts)
   registerAdvancedRoutes(app);
 
   // Users

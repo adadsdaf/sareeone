@@ -28,20 +28,6 @@ router.get("/", async (req, res) => {
   }
 });
 
-// جلب سائق محدد بالمعرف
-router.get("/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const driver = await storage.getDriver(id);
-    if (!driver) {
-      return res.status(404).json({ message: "Driver not found" });
-    }
-    res.json(driver);
-  } catch (error) {
-    res.status(500).json({ message: "Failed to fetch driver" });
-  }
-});
-
 // إنشاء سائق جديد (من لوحة التحكم)
 router.post("/", async (req, res) => {
   try {
@@ -539,6 +525,20 @@ router.put("/profile", async (req: AuthenticatedRequest, res) => {
   } catch (error) {
     console.error("خطأ في تحديث الملف الشخصي:", error);
     res.status(400).json({ error: "بيانات غير صحيحة" });
+  }
+});
+
+// جلب سائق محدد بالمعرف - يجب أن يكون في النهاية لتفادي التعارض مع المسارات الأخرى
+router.get("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const driver = await storage.getDriver(id);
+    if (!driver) {
+      return res.status(404).json({ message: "Driver not found" });
+    }
+    res.json(driver);
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch driver" });
   }
 });
 
