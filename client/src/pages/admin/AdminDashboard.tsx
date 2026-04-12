@@ -295,7 +295,7 @@ export default function AdminDashboard() {
                         <div className="text-left">
                           <p className="font-medium">{formatCurrency(order.total || 0)}</p>
                           <p className="text-xs text-gray-500">
-                            {order.items ? JSON.parse(order.items).length : 0} عنصر
+                            {order.items ? (() => { try { const items = typeof order.items === 'string' ? JSON.parse(order.items) : order.items; return Array.isArray(items) ? items.length : 0; } catch { return 0; } })() : 0} عنصر
                           </p>
                         </div>
                         <Badge variant={

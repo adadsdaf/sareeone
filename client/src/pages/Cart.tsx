@@ -572,16 +572,14 @@ export default function Cart() {
                   <Button 
                     className={`w-full font-semibold py-3 text-lg ${canPlaceOrder ? 'bg-black hover:bg-red-600 text-white' : 'bg-gray-400 text-white cursor-not-allowed'}`}
                     onClick={handlePlaceOrder}
-                    disabled={placeOrderMutation.isPending || !orderForm.locationData || !canPlaceOrder}
+                    disabled={placeOrderMutation.isPending || !canPlaceOrder}
                     data-testid="button-place-order"
                   >
                     {placeOrderMutation.isPending 
                       ? 'جاري تأكيد الطلب...' 
                       : !canPlaceOrder 
                         ? (!appStatus.isOpen ? '🔒 التطبيق مغلق حالياً' : '🔒 المتجر مغلق حالياً')
-                        : !orderForm.locationData 
-                          ? 'يرجى تحديد الموقع للمتابعة' 
-                          : `تأكيد الطلب - ${formatCurrency(total)}`}
+                        : `تأكيد الطلب - ${formatCurrency(total)}`}
                   </Button>
                 </CardContent>
               </Card>
