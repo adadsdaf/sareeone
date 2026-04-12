@@ -139,6 +139,7 @@ function Router() {
       <Route path="/addresses" component={Location} />
       <Route path="/orders" component={OrdersPage} />
       <Route path="/orders/:orderId" component={OrderTrackingPage} />
+      <Route path="/order-tracking/:orderId" component={OrderTrackingPage} />
       {showTrackOrdersPage && <Route path="/track-orders" component={TrackOrdersPage} />}
       <Route path="/settings" component={Settings} />
       <Route path="/privacy" component={Privacy} />
