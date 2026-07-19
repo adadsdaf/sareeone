@@ -64,26 +64,41 @@ async function upgradePasswordIfNeeded(
 // تسجيل الدخول للعملاء
 router.post('/login', async (req, res) => {
   try {
-    const { identifier, password } = req.body;
+    const rawIdentifier = req.body?.identifier;
+    const rawPassword = req.body?.password;
 
-    if (!identifier || !password) {
+    if (!rawIdentifier || !rawPassword) {
       return res.status(400).json({
         success: false,
         message: 'اسم المستخدم/الهاتف وكلمة المرور مطلوبان'
       });
     }
 
+    // تطبيع المدخلات: إزالة الفراغات الزائدة وتحويل الأرقام العربية إلى لاتينية
+    const arabicToLatinDigits = (s: string) =>
+      s.replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+       .replace(/[\u06F0-\u06F9]/g, (d) => String(d.charCodeAt(0) - 0x06F0));
+
+    const identifier = arabicToLatinDigits(String(rawIdentifier).trim());
+    const password = String(rawPassword);
+    const identifierNoSpaces = identifier.replace(/\s+/g, '');
+    const identifierLower = identifier.toLowerCase();
+
     console.log('🔐 محاولة تسجيل دخول عميل:', identifier);
 
     // البحث عن العميل في قاعدة البيانات (باسم المستخدم أو الهاتف أو البريد)
+    // ندعم: المطابقة مع الفراغات أو بدونها، وحالة الأحرف للبريد
     const userResult = await dbStorage.db
       .select()
       .from(users)
       .where(
         or(
           eq(users.username, identifier),
+          eq(users.username, identifierNoSpaces),
           eq(users.phone, identifier),
-          eq(users.email, identifier)
+          eq(users.phone, identifierNoSpaces),
+          eq(users.email, identifier),
+          eq(users.email, identifierLower)
         )
       )
       .limit(1);
@@ -214,6 +229,11 @@ router.post('/validate', async (req, res) => {
     }
 
     const user = userResult[0];
+
+    if (!user.isActive) {
+      return res.status(401).json({ success: false, message: 'الحساب غير مفعل' });
+    }
+
     res.json({
       success: true,
       user: {
@@ -222,7 +242,8 @@ router.post('/validate', async (req, res) => {
         username: user.username,
         email: user.email,
         phone: user.phone,
-        userType: 'customer'
+        userType: 'customer',
+        isActive: user.isActive
       }
     });
   } catch (error) {
@@ -238,14 +259,32 @@ router.post('/validate', async (req, res) => {
 router.post('/register', async (req, res) => {
   try {
     const validatedData = insertUserSchema.parse(req.body);
-    
+
+    // تطبيع المدخلات: إزالة الفراغات الزائدة من اسم المستخدم/الهاتف/البريد
+    const arabicToLatinDigits = (s: string) =>
+      s.replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+       .replace(/[\u06F0-\u06F9]/g, (d) => String(d.charCodeAt(0) - 0x06F0));
+
+    if (validatedData.username) {
+      validatedData.username = arabicToLatinDigits(String(validatedData.username).trim()).replace(/\s+/g, '');
+    }
+    if (validatedData.phone) {
+      validatedData.phone = arabicToLatinDigits(String(validatedData.phone).trim()).replace(/\s+/g, '');
+    }
+    if (validatedData.email) {
+      validatedData.email = String(validatedData.email).trim().toLowerCase();
+    }
+    if (validatedData.name) {
+      validatedData.name = String(validatedData.name).trim();
+    }
+
     // التحقق من وجود المستخدم مسبقاً
     const existingUser = await dbStorage.db
       .select()
       .from(users)
       .where(
         or(
-          eq(users.username, validatedData.username),
+          validatedData.username ? eq(users.username, validatedData.username) : undefined,
           validatedData.phone ? eq(users.phone, validatedData.phone) : undefined
         )
       )
@@ -287,6 +326,89 @@ router.post('/register', async (req, res) => {
     res.status(400).json({
       success: false,
       message: 'بيانات التسجيل غير صحيحة'
+    });
+  }
+});
+
+// تسجيل الدخول عبر التواصل الاجتماعي (Google / Apple)
+router.post('/social-login', async (req, res) => {
+  try {
+    const { provider, socialId, email, name, phone } = req.body;
+
+    if (!provider || !socialId) {
+      return res.status(400).json({
+        success: false,
+        message: 'مزود الخدمة ومعرف التواصل الاجتماعي مطلوبان'
+      });
+    }
+
+    console.log(`🔐 محاولة تسجيل دخول اجتماعي (${provider}):`, socialId);
+
+    let user;
+    
+    // 1. البحث عن المستخدم بالمعرف الاجتماعي
+    const socialQuery = provider === 'google' ? eq(users.googleId, socialId) : eq(users.appleId, socialId);
+    const existingSocialUser = await dbStorage.db.select().from(users).where(socialQuery).limit(1);
+
+    if (existingSocialUser.length > 0) {
+      user = existingSocialUser[0];
+    } else if (email) {
+      // 2. البحث عن المستخدم بالبريد الإلكتروني لربط الحساب
+      const existingEmailUser = await dbStorage.db.select().from(users).where(eq(users.email, email)).limit(1);
+      
+      if (existingEmailUser.length > 0) {
+        user = existingEmailUser[0];
+        // تحديث معرف التواصل الاجتماعي
+        const updateData: any = {};
+        if (provider === 'google') updateData.googleId = socialId;
+        if (provider === 'apple') updateData.appleId = socialId;
+        
+        await dbStorage.db.update(users).set(updateData).where(eq(users.id, user.id));
+        console.log(`🔗 تم ربط حساب ${provider} بالمستخدم الموجود:`, email);
+      }
+    }
+
+    if (!user) {
+      // 3. إنشاء مستخدم جديد
+      console.log(`🆕 إنشاء مستخدم جديد عبر ${provider}:`, name);
+      const [newUser] = await dbStorage.db.insert(users).values({
+        name: name || 'مستخدم جديد',
+        email: email || null,
+        phone: phone || '0000000000', // قيمة افتراضية إذا لم يتوفر رقم الهاتف
+        googleId: provider === 'google' ? socialId : null,
+        appleId: provider === 'apple' ? socialId : null,
+        isActive: true,
+      }).returning();
+      user = newUser;
+    }
+
+    // التحقق من حالة الحساب
+    if (!user.isActive) {
+      return res.status(401).json({
+        success: false,
+        message: 'الحساب غير مفعل'
+      });
+    }
+
+    const token = user.id;
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        userType: 'customer'
+      },
+      message: 'تم تسجيل الدخول بنجاح'
+    });
+
+  } catch (error) {
+    console.error('خطأ في تسجيل الدخول الاجتماعي:', error);
+    res.status(500).json({
+      success: false,
+      message: 'حدث خطأ في الخادم'
     });
   }
 });

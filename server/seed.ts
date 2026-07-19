@@ -12,6 +12,8 @@ const defaultUiSettings = [
   { key: "show_delivery_app", value: "true", category: "navigation", description: "عرض تطبيق التوصيل" },
   { key: "show_hero_section", value: "true", category: "navigation", description: "عرض البانر الرئيسي المتحرك" },
   { key: "show_featured_products", value: "true", category: "navigation", description: "عرض المنتجات المميزة" },
+  { key: "show_wasalni_service", value: "true", category: "navigation", description: "عرض خدمة وصل لي في الصفحة الرئيسية" },
+  { key: "wasalni_base_fee", value: "5", category: "delivery", description: "رسوم خدمة وصل لي الأساسية" },
   { key: "bottom_bar_enabled", value: "true", category: "navigation", description: "إظهار شريط التنقل السفلي" },
   // إعدادات عامة
   { key: "app_name", value: "السريع ون", category: "general", description: "اسم التطبيق" },
@@ -73,6 +75,7 @@ const defaultUiSettings = [
   // إعدادات السلة والدفع
   { key: "show_payment_cards", value: "true", category: "cart", description: "إظهار بطاقات الدفع في السلة" },
   { key: "show_coupon_box_always", value: "true", category: "cart", description: "إظهار صندوق الكوبون دائمًا" },
+  { key: "coupon_min_order_value", value: "0", category: "cart", description: "الحد الأدنى لقيمة الطلب لإظهار صندوق الكوبون (0 = دائماً)" },
   { key: "show_cash_payment", value: "true", category: "cart", description: "إظهار خيار الدفع نقداً" },
   { key: "show_bank_transfer", value: "false", category: "cart", description: "إظهار خيار التحويل البنكي" },
   { key: "cart_checkout_button_text", value: "تأكيد الطلب", category: "cart", description: "نص زر الدفع" },
@@ -82,6 +85,10 @@ const defaultUiSettings = [
   { key: "driver_show_stats", value: "true", category: "driver", description: "إظهار صفحة الإحصائيات للسائق" },
   { key: "driver_show_profile", value: "true", category: "driver", description: "إظهار صفحة الملف الشخصي للسائق" },
   { key: "driver_show_history", value: "true", category: "driver", description: "إظهار سجل التوصيل للسائق" },
+  // إعدادات ساعات عمل الموصلين والطلبات المؤجلة
+  { key: "driver_start_time", value: "09:00", category: "driver", description: "وقت بدء دوام الموصلين (مثال: 09:00)" },
+  { key: "driver_end_time", value: "21:00", category: "driver", description: "وقت انتهاء دوام الموصلين (مثال: 21:00)" },
+  { key: "enable_scheduled_orders", value: "true", category: "driver", description: "السماح للعملاء بجدولة الطلبات خارج ساعات الموصلين" },
 ];
 
 // ضمان وجود الإعدادات الافتراضية في قاعدة البيانات (لكل تشغيل)
@@ -135,7 +142,7 @@ export async function seedDefaultData() {
     // Seed restaurants
     const restaurants = [
       {
-        name: "متجر السريع ون",
+        name: "السريع ون",
         description: "أجود أنواع الفواكه والخضروات الطازجة يومياً",
         image: "https://images.unsplash.com/photo-1542838132-92c53300491e?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&h=400",
         phone: "+967777777777",

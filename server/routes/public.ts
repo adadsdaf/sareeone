@@ -1,8 +1,59 @@
 import express from "express";
 import { storage } from "../storage.js";
 import * as schema from "../../shared/schema.js";
+import { eq, desc, and, or, like, sql } from "drizzle-orm";
 
 const router = express.Router();
+
+// التحقق من حالة التطبيق
+router.get("/app-status", async (req, res) => {
+  try {
+    const { opening, closing, status } = req.query;
+    const openingTime = opening as string || '08:00';
+    const closingTime = closing as string || '23:00';
+    const storeStatus = status as string || 'open';
+
+    if (storeStatus === 'closed') {
+      return res.json({ isOpen: false, message: "التطبيق مغلق حالياً من قِبل الإدارة", openingTime });
+    }
+
+    if (storeStatus === 'open') {
+      return res.json({ isOpen: true });
+    }
+
+    const now = new Date();
+    // الحصول على الوقت الحالي بتوقيت اليمن (UTC+3)
+    const yemenTime = new Date(now.getTime() + (3 * 60 * 60 * 1000));
+    const currentTime = yemenTime.toISOString().split('T')[1].slice(0, 5);
+    
+    const timeToMinutes = (t: string) => { 
+      const [h, m] = t.split(':').map(Number); 
+      return h * 60 + m; 
+    };
+    
+    const current = timeToMinutes(currentTime);
+    const open = timeToMinutes(openingTime);
+    const close = timeToMinutes(closingTime);
+    
+    let appIsOpen = close > open 
+      ? (current >= open && current < close) 
+      : (current >= open || current < close);
+
+    if (!appIsOpen) {
+      const isBeforeOpen = current < open;
+      const whenOpen = isBeforeOpen ? `يفتح اليوم الساعة ${openingTime}` : `يفتح غداً الساعة ${openingTime}`;
+      return res.json({ 
+        isOpen: false, 
+        message: `التطبيق مغلق حالياً. ${whenOpen}`,
+        openingTime 
+      });
+    }
+
+    res.json({ isOpen: true });
+  } catch (error) {
+    res.status(500).json({ isOpen: false, message: "خطأ في التحقق من حالة التطبيق" });
+  }
+});
 
 // جلب التصنيفات
 router.get("/categories", async (req, res) => {
@@ -149,14 +200,84 @@ router.get("/special-offers", async (req, res) => {
   }
 });
 
+// إنشاء طلب جديد
+router.post("/orders", async (req, res) => {
+  try {
+    const orderData = req.body;
+    
+    // توليد رقم طلب فريد
+    const orderNumber = `ORD${Date.now()}${Math.floor(Math.random() * 1000)}`;
+    
+    const newOrderData = {
+      ...orderData,
+      orderNumber,
+      status: "pending",
+      paymentStatus: "pending"
+    };
+
+    const [newOrder] = await db.insert(schema.orders)
+      .values(newOrderData)
+      .returning();
+
+    // إضافة تتبع للطلب
+    await db.insert(schema.orderTracking).values({
+      orderId: newOrder.id,
+      status: "pending",
+      message: "تم إنشاء الطلب بنجاح",
+      createdByType: 'system'
+    });
+
+    // إشعار المطعم (يمكن إضافة WebSocket هنا)
+    
+    res.json(newOrder);
+  } catch (error) {
+    console.error("خطأ في إنشاء الطلب:", error);
+    res.status(500).json({ error: "خطأ في الخادم" });
+  }
+});
+
+// تتبع الطلب
+router.get("/orders/:id/track", async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const order = await db.query.orders.findFirst({
+      where: eq(schema.orders.id, id),
+    });
+
+    if (!order) {
+      return res.status(404).json({ error: "الطلب غير موجود" });
+    }
+
+    // جلب تتبع الطلب
+    const tracking = await db.query.orderTracking.findMany({
+      where: eq(schema.orderTracking.orderId, id),
+      orderBy: desc(schema.orderTracking.timestamp!)
+    });
+
+    res.json({
+      order,
+      tracking
+    });
+  } catch (error) {
+    console.error("خطأ في تتبع الطلب:", error);
+    res.status(500).json({ error: "خطأ في الخادم" });
+  }
+});
+
 // جلب إعدادات النظام العامة
 router.get("/settings", async (req, res) => {
   try {
-    const allSettings = await storage.getUiSettings();
-    const settingsObject = allSettings.reduce((acc: any, setting: any) => {
+    const settings = await db.query.systemSettings.findMany({
+      where: eq(schema.systemSettings.isPublic, true)
+    });
+    
+    // تحويل الإعدادات إلى كائن
+    const settingsObject = settings.reduce((acc, setting) => {
       acc[setting.key] = setting.value;
       return acc;
     }, {} as any);
+    
     res.json(settingsObject);
   } catch (error) {
     console.error("خطأ في جلب الإعدادات:", error);

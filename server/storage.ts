@@ -74,9 +74,13 @@ export interface IStorage {
   getOrders(): Promise<Order[]>;
   getOrder(id: string): Promise<Order | undefined>;
   getOrdersByRestaurant(restaurantId: string): Promise<Order[]>;
-  getOrdersByCustomer(phone: string): Promise<Order[]>;
+  getOrdersByCustomer(phone: string, customerId?: string): Promise<Order[]>;
   createOrder(order: InsertOrder): Promise<Order>;
   updateOrder(id: string, order: Partial<InsertOrder>): Promise<Order | undefined>;
+
+  // Wasalni
+  getWasalniRequest(id: string): Promise<any | undefined>;
+  updateWasalniRequest(id: string, data: any): Promise<any | undefined>;
 
   // Drivers
   getDrivers(): Promise<Driver[]>;
@@ -84,6 +88,7 @@ export interface IStorage {
   getDriver(id: string): Promise<Driver | undefined>;
   getDriverById(id: string): Promise<Driver | undefined>;
   getAvailableDrivers(): Promise<Driver[]>;
+  getClosestDrivers(lat: number, lon: number, limit?: number): Promise<(Driver & { distance: number })[]>;
   createDriver(driver: InsertDriver): Promise<Driver>;
   updateDriver(id: string, driver: Partial<InsertDriver>): Promise<Driver | undefined>;
   deleteDriver(id: string): Promise<boolean>;
@@ -145,6 +150,7 @@ export interface IStorage {
 
   // Enhanced notification methods
   getNotifications(recipientType?: string, recipientId?: string, unread?: boolean): Promise<Notification[]>;
+  markNotificationAsRead(id: string): Promise<Notification | undefined>;
 
   // Search methods
   searchRestaurants(query: string, category?: string): Promise<Restaurant[]>;
@@ -1027,6 +1033,14 @@ export class MemStorage implements IStorage {
     return updated;
   }
 
+  async getWasalniRequest(id: string): Promise<any | undefined> {
+    return undefined; // Not implemented for MemStorage
+  }
+
+  async updateWasalniRequest(id: string, data: any): Promise<any | undefined> {
+    return undefined; // Not implemented for MemStorage
+  }
+
   // Drivers مع الحقول الجديدة
   async getDrivers(): Promise<Driver[]> {
     return Array.from(this.drivers.values());
@@ -1451,7 +1465,31 @@ export class MemStorage implements IStorage {
       createdAt: new Date()
     };
     this.notifications.set(id, newNotification);
+
+    // Notify client if WebSocket manager is available
+    if (global.WS_MANAGER) {
+      // Send based on recipient type
+      if (notification.recipientType === 'customer' && notification.recipientId) {
+        global.WS_MANAGER.sendToUser(notification.recipientId, 'NEW_NOTIFICATION', newNotification);
+      } else if (notification.recipientType === 'driver' && notification.recipientId) {
+        global.WS_MANAGER.sendToDriver(notification.recipientId, 'NEW_NOTIFICATION', newNotification);
+      } else if (notification.recipientType === 'admin') {
+        global.WS_MANAGER.sendToAdmin('NEW_NOTIFICATION', newNotification);
+      }
+      
+      // Always notify admin about all notifications for visibility
+      global.WS_MANAGER.sendToAdmin('NEW_NOTIFICATION', newNotification);
+    }
+
     return newNotification;
+  }
+
+  async markNotificationAsRead(id: string): Promise<Notification | undefined> {
+    const notification = this.notifications.get(id);
+    if (!notification) return undefined;
+    const updated = { ...notification, isRead: true };
+    this.notifications.set(id, updated);
+    return updated;
   }
 
   // Search methods

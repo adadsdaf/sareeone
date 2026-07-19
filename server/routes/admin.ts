@@ -1,7 +1,7 @@
 import express from "express";
 import bcrypt from "bcryptjs";
 import { storage } from "../storage";
-import { broadcastSettingsChanged } from "../broadcast";
+import { broadcastSettingsChanged, broadcastEvent } from "../broadcast";
 import { z } from "zod";
 import { eq, and, desc, sql, or, like, asc, inArray } from "drizzle-orm";
 import {
@@ -81,7 +81,7 @@ const schema = {
   driverWithdrawals
 };
 
-// Middleware اختياري للمصادقة - يُضيف req.admin إذا كان التوكن صحيحاً
+// Middleware للمصادقة - يُضيف req.admin إذا كان التوكن صحيحاً
 router.use(async (req: any, res, next) => {
   try {
     const authHeader = req.headers.authorization;
@@ -90,6 +90,16 @@ router.use(async (req: any, res, next) => {
       const adminUser = await dbStorage.getAdminById(token);
       if (adminUser && adminUser.isActive) {
         req.admin = adminUser;
+        // تحليل الصلاحيات للمدير الفرعي
+        if (adminUser.userType === 'sub_admin') {
+          try {
+            req.adminPermissions = adminUser.permissions ? JSON.parse(adminUser.permissions) : [];
+          } catch {
+            req.adminPermissions = [];
+          }
+        } else {
+          req.adminPermissions = null; // null = all permissions (main admin)
+        }
       }
     }
   } catch (e) {
@@ -97,6 +107,22 @@ router.use(async (req: any, res, next) => {
   }
   next();
 });
+
+// دالة للتحقق من صلاحيات المدير الفرعي
+function requirePermission(permission: string) {
+  return (req: any, res: any, next: any) => {
+    // إذا لم يكن هناك مدير مسجل دخوله، تجاوز (لا توجد مصادقة إلزامية)
+    if (!req.admin) return next();
+    // المدير الرئيسي له جميع الصلاحيات
+    if (req.admin.userType === 'admin') return next();
+    // المدير الفرعي: التحقق من الصلاحية
+    const perms: string[] = req.adminPermissions || [];
+    if (!perms.includes(permission)) {
+      return res.status(403).json({ error: "ليس لديك صلاحية للوصول إلى هذه الوظيفة" });
+    }
+    next();
+  };
+}
 
 // لوحة المعلومات
 router.get("/dashboard", async (req, res) => {
@@ -632,8 +658,67 @@ router.put("/orders/:id/status", async (req: any, res) => {
       return res.status(404).json({ error: "الطلب غير موجود" });
     }
     
-    // Note: تتبع الطلبات (order tracking) ليس منفذاً في MemStorage بعد
-    // يمكن إضافته لاحقاً إذا لزم الأمر
+    // بث التحديث عبر WebSocket - مستهدف فقط لأطراف الطلب
+    const ws = req.app.get('ws');
+    if (ws) {
+      const payload = { 
+        orderId: id, 
+        status,
+        orderNumber: updatedOrder.orderNumber,
+        driverId: updatedOrder.driverId,
+        type: 'regular'
+      };
+      if (typeof ws.notifyOrder === 'function') {
+        ws.notifyOrder('order_update', payload, {
+          customerId: updatedOrder.customerId,
+          customerPhone: updatedOrder.customerPhone,
+          driverId: updatedOrder.driverId,
+          orderId: id,
+        });
+      }
+
+      // إشعار السائق عند التعيين بطلب جديد
+      if (driverId && updatedOrder.driverId) {
+        ws.sendToDriver(updatedOrder.driverId, 'new_order_assigned', { orderId: id, orderNumber: updatedOrder.orderNumber });
+      }
+    }
+
+    // إنشاء رسالة الحالة للتتبع والإشعارات
+    let statusMessage = '';
+    switch (status) {
+      case 'confirmed': statusMessage = 'تم تأكيد الطلب'; break;
+      case 'preparing': statusMessage = 'جاري تحضير الطلب'; break;
+      case 'ready': statusMessage = 'الطلب جاهز للاستلام'; break;
+      case 'picked_up': statusMessage = 'تم استلام الطلب من المطعم'; break;
+      case 'on_way': statusMessage = 'السائق في الطريق إليك'; break;
+      case 'delivered': statusMessage = 'تم تسليم الطلب بنجاح'; break;
+      case 'cancelled': statusMessage = 'تم إلغاء الطلب من قبل الإدارة'; break;
+      default: statusMessage = `تم تحديث حالة الطلب إلى ${status}`;
+    }
+
+    try {
+      // إنشاء قيد تتبع
+      await storage.createOrderTracking({
+        orderId: id,
+        status,
+        message: statusMessage,
+        createdBy: req.admin?.id || 'admin',
+        createdByType: 'admin'
+      });
+
+      // إشعار للعميل
+      await storage.createNotification({
+        type: 'order_status_update',
+        title: 'تحديث حالة الطلب',
+        message: `طلبك رقم ${updatedOrder.orderNumber}: ${statusMessage}`,
+        recipientType: 'customer',
+        recipientId: updatedOrder.customerId || updatedOrder.customerPhone,
+        orderId: id,
+        isRead: false
+      });
+    } catch (err) {
+      console.error("Error creating tracking/notification in admin update:", err);
+    }
     
     res.json(updatedOrder);
   } catch (error) {
@@ -800,6 +885,73 @@ router.get("/reports/users", async (req, res) => {
     });
   } catch (error) {
     console.error("خطأ في تقارير المستخدمين:", error);
+    res.status(500).json({ error: "خطأ في الخادم" });
+  }
+});
+
+// ملخص السائقين للتقارير المتقدمة
+router.get("/drivers-summary", async (req, res) => {
+  try {
+    const driversList = await storage.getDrivers();
+    const allOrders = await storage.getOrders();
+
+    const summary = await Promise.all(
+      driversList.map(async (driver) => {
+        const driverOrders = allOrders.filter(o => o.driverId === driver.id && o.status === 'delivered');
+        const totalEarnings = driverOrders.reduce((sum, o) => sum + parseFloat(o.deliveryFee || "0"), 0);
+        const balance = await storage.getDriverBalance(driver.id).catch(() => null);
+        return {
+          id: driver.id,
+          name: driver.name,
+          phone: driver.phone,
+          isAvailable: driver.isAvailable,
+          stats: {
+            totalOrders: driverOrders.length,
+            totalEarnings: balance ? parseFloat(balance.totalBalance || "0") : totalEarnings,
+            averageRating: parseFloat(driver.rating || "0"),
+            availableBalance: balance ? parseFloat(balance.availableBalance || "0") : 0
+          }
+        };
+      })
+    );
+
+    res.json(summary);
+  } catch (error) {
+    console.error("خطأ في ملخص السائقين:", error);
+    res.status(500).json({ error: "خطأ في الخادم" });
+  }
+});
+
+// ملخص المطاعم للتقارير المتقدمة
+router.get("/restaurants-summary", async (req, res) => {
+  try {
+    const allRestaurants = await storage.getRestaurants({});
+    const allOrders = await storage.getOrders();
+
+    const summary = allRestaurants.map(restaurant => {
+      const restaurantOrders = allOrders.filter(o => o.restaurantId === restaurant.id && o.status === 'delivered');
+      const totalRevenue = restaurantOrders.reduce((sum, o) => sum + parseFloat(o.totalAmount || o.total || "0"), 0);
+      const commissionRate = 0.15;
+      const totalCommission = totalRevenue * commissionRate;
+
+      return {
+        id: restaurant.id,
+        name: restaurant.name,
+        phone: restaurant.phone,
+        isOpen: restaurant.isOpen,
+        stats: {
+          totalOrders: restaurantOrders.length,
+          totalRevenue,
+          totalCommission,
+          netEarnings: totalRevenue - totalCommission,
+          avgOrderValue: restaurantOrders.length > 0 ? totalRevenue / restaurantOrders.length : 0
+        }
+      };
+    });
+
+    res.json(summary);
+  } catch (error) {
+    console.error("خطأ في ملخص المطاعم:", error);
     res.status(500).json({ error: "خطأ في الخادم" });
   }
 });
@@ -1539,34 +1691,66 @@ router.post("/special-offers", async (req, res) => {
       restaurantId: coercedData.restaurantId,
       menuItemId: coercedData.menuItemId,
       categoryId: coercedData.categoryId,
+      sectionId: coercedData.sectionId,
+      showBadge: coercedData.showBadge !== undefined ? coercedData.showBadge : true,
+      badgeText1: coercedData.badgeText1 || "طازج يومياً",
+      badgeText2: coercedData.badgeText2 || "عروض حصرية",
       
       // حقول التوقيت
       createdAt: new Date()
     };
     
     console.log("Processed special offer data:", offerData);
-    
-    // ضمان وجود تصنيف "العروض" وربط العرض به تلقائياً
-    try {
-      const allCategories = await storage.getCategories();
-      let offersCategory = allCategories.find(c => c.name === 'العروض' || c.name === 'Offers');
-      
-      if (!offersCategory) {
-        offersCategory = await storage.createCategory({
-          name: 'العروض',
-          icon: 'fas fa-tags',
-          image: 'https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?q=80&w=400',
-          isActive: true,
-          sortOrder: -1, // جعلها تظهر في البداية
-          type: 'primary'
-        });
+
+    // قواعد الربط:
+    //   - عرض خاص بمتجر (restaurantId محدد):
+    //       * لا يتم ربطه بالتصنيف العام "العروض"
+    //       * إذا لم يحدد المسؤول قسماً: ابحث عن قسم اسمه "العروض" داخل المتجر،
+    //         وإن لم يوجد فأنشئه تلقائياً واربط العرض به.
+    //   - عرض عام (بدون restaurantId):
+    //       * إذا لم يحدد تصنيفاً: تأكد من وجود تصنيف عام "العروض" واربط العرض به.
+    if (offerData.restaurantId) {
+      // عرض خاص بمتجر
+      offerData.categoryId = undefined; // لا تربط العروض الخاصة بمتجر بتصنيف عام
+      if (!offerData.sectionId) {
+        try {
+          const existingSections = await storage.getRestaurantSections(offerData.restaurantId);
+          let offersSection = existingSections.find((s: any) => s.name === 'العروض' || s.name === 'Offers');
+          if (!offersSection) {
+            offersSection = await storage.createRestaurantSection({
+              restaurantId: offerData.restaurantId,
+              name: 'العروض',
+              description: 'العروض الخاصة لهذا المتجر',
+              sortOrder: -1,
+              isActive: true,
+            } as any);
+          }
+          if (offersSection) offerData.sectionId = offersSection.id;
+        } catch (secErr) {
+          console.error('Error ensuring offers section for store:', secErr);
+        }
       }
-      
-      if (!offerData.categoryId) {
-        offerData.categoryId = offersCategory.id;
+    } else {
+      // عرض عام (شركة بكاملها) - تأكد من وجود التصنيف العام "العروض"
+      try {
+        const allCategories = await storage.getCategories();
+        let offersCategory = allCategories.find(c => c.name === 'العروض' || c.name === 'Offers');
+        if (!offersCategory) {
+          offersCategory = await storage.createCategory({
+            name: 'العروض',
+            icon: 'fas fa-tags',
+            image: 'https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?q=80&w=400',
+            isActive: true,
+            sortOrder: -1,
+            type: 'primary'
+          });
+        }
+        if (!offerData.categoryId && offersCategory) {
+          offerData.categoryId = offersCategory.id;
+        }
+      } catch (catError) {
+        console.error('Error ensuring Offers category exists:', catError);
       }
-    } catch (catError) {
-      console.error('Error ensuring Offers category exists:', catError);
     }
 
     const validatedData = insertSpecialOfferSchema.parse(offerData);
@@ -1650,9 +1834,33 @@ router.post("/notifications", async (req: any, res) => {
       .values(notificationData)
       .returning();
     
+    // بث الإشعار عبر WebSocket لجميع المتصلين
+    broadcastEvent('new_notification', {
+      notification: newNotification,
+      recipientType: notificationData.recipientType,
+      recipientId: notificationData.recipientId,
+      timestamp: new Date().toISOString()
+    });
+    
     res.json(newNotification);
   } catch (error) {
     console.error("خطأ في إنشاء الإشعار:", error);
+    res.status(500).json({ error: "خطأ في الخادم" });
+  }
+});
+
+// جلب جميع الإشعارات
+router.get("/notifications", async (req: any, res) => {
+  try {
+    const { recipientType, recipientId, limit: limitParam } = req.query;
+    const limitNum = parseInt(limitParam as string) || 50;
+    
+    let query = db.select().from(schema.notifications).orderBy(desc(schema.notifications.createdAt)).limit(limitNum);
+    const notifs = await query;
+    
+    res.json(notifs);
+  } catch (error) {
+    console.error("خطأ في جلب الإشعارات:", error);
     res.status(500).json({ error: "خطأ في الخادم" });
   }
 });
@@ -1680,6 +1888,9 @@ router.put("/settings/:key", async (req, res) => {
       .where(eq(schema.systemSettings.key, key))
       .returning();
     
+    // بث التحديث عبر WebSocket
+    broadcastSettingsChanged(key);
+
     res.json(updatedSetting);
   } catch (error) {
     res.status(500).json({ error: "خطأ في الخادم" });
@@ -1718,6 +1929,9 @@ router.put("/business-hours", async (req, res) => {
     }
     
     await Promise.all(updates);
+    
+    // بث التحديث عبر WebSocket لمزامنة جميع الأجهزة
+    broadcastSettingsChanged('business_hours');
     
     res.json({ success: true, message: "تم تحديث أوقات العمل بنجاح" });
   } catch (error) {
@@ -1975,6 +2189,9 @@ router.put("/ui-settings/:key", async (req, res) => {
     if (!setting) {
       return res.status(404).json({ error: "فشل في تحديث الإعداد" });
     }
+
+    // بث التحديث عبر WebSocket لمزامنة جميع الأجهزة فوراً
+    broadcastSettingsChanged(key);
 
     res.json(setting);
   } catch (error) {
@@ -2308,8 +2525,8 @@ router.put("/change-password", async (req: any, res) => {
   }
 });
 
-// Sub-admins Management
-router.get("/sub-admins", async (req, res) => {
+// Sub-admins Management - للمدير الرئيسي فقط
+router.get("/sub-admins", requirePermission('manage_admins'), async (req, res) => {
   try {
     const subAdmins = await db.select().from(adminUsers).where(eq(adminUsers.userType, 'sub_admin'));
     const safe = subAdmins.map((u: any) => { const { password: _, ...rest } = u; return rest; });
@@ -2319,7 +2536,7 @@ router.get("/sub-admins", async (req, res) => {
   }
 });
 
-router.post("/sub-admins", async (req, res) => {
+router.post("/sub-admins", requirePermission('manage_admins'), async (req, res) => {
   try {
     const { name, phone, password, permissions, isActive } = req.body;
     let { email, username } = req.body;
@@ -2348,7 +2565,7 @@ router.post("/sub-admins", async (req, res) => {
   }
 });
 
-router.put("/sub-admins/:id", async (req, res) => {
+router.put("/sub-admins/:id", requirePermission('manage_admins'), async (req, res) => {
   try {
     const { name, phone, password, permissions, isActive } = req.body;
     let { email, username } = req.body;
@@ -2370,7 +2587,7 @@ router.put("/sub-admins/:id", async (req, res) => {
   }
 });
 
-router.delete("/sub-admins/:id", async (req, res) => {
+router.delete("/sub-admins/:id", requirePermission('manage_admins'), async (req, res) => {
   try {
     await db.delete(adminUsers).where(eq(adminUsers.id, req.params.id));
     res.json({ success: true });
