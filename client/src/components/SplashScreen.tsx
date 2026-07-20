@@ -1,30 +1,89 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useUiSettings } from '@/context/UiSettingsContext';
+import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
-import { ChevronLeft } from 'lucide-react';
+import { ChevronLeft, Loader2 } from 'lucide-react';
+import { prefetchBootstrap } from '@/lib/bootstrap';
+import waselLogo from '@assets/wasel-logo.png';
 
 interface SplashScreenProps {
   onFinish: () => void;
 }
 
+const MIN_SPLASH_MS = 1400;
+const MAX_BOOTSTRAP_MS = 6000;
+
+const PARTICLE_COUNT = 22;
+const TWINKLE_COUNT = 14;
+const RAY_COUNT = 12;
+
 export const SplashScreen: React.FC<SplashScreenProps> = ({ onFinish }) => {
   const { getSetting, loading: settingsLoading } = useUiSettings();
+  const { user } = useAuth();
   const [show, setShow] = useState(true);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const startedAt = Date.now();
+
+    const phone = user?.phone || localStorage.getItem('customer_phone') || '';
+    const customerId = user?.id || '';
+
+    const bootPromise = prefetchBootstrap({ phone, customerId, force: true });
+    const timeoutPromise = new Promise(resolve => setTimeout(resolve, MAX_BOOTSTRAP_MS));
+
+    Promise.race([bootPromise, timeoutPromise]).finally(() => {
+      const elapsed = Date.now() - startedAt;
+      const remaining = Math.max(0, MIN_SPLASH_MS - elapsed);
+      setTimeout(() => {
+        if (!cancelled) setReady(true);
+      }, remaining);
+    });
+
+    return () => { cancelled = true; };
+  }, [user?.id, user?.phone]);
+
+  // Pre-compute random positions once so they don't shift on re-render
+  const particles = useMemo(() =>
+    Array.from({ length: PARTICLE_COUNT }, (_, i) => ({
+      id: i,
+      left: Math.random() * 100,
+      top: 20 + Math.random() * 60,
+      size: 3 + Math.random() * 6,
+      delay: Math.random() * 6,
+      duration: 5 + Math.random() * 4,
+      hue: Math.random() > 0.5 ? '#FF4500' : '#FF6535',
+    })), []);
+
+  const twinkles = useMemo(() =>
+    Array.from({ length: TWINKLE_COUNT }, (_, i) => ({
+      id: i,
+      left: Math.random() * 100,
+      top: Math.random() * 100,
+      size: 2 + Math.random() * 3,
+      delay: Math.random() * 2.4,
+    })), []);
+
+  const rays = useMemo(() =>
+    Array.from({ length: RAY_COUNT }, (_, i) => ({
+      id: i,
+      angle: (360 / RAY_COUNT) * i,
+      delay: (i * 0.15) % 4,
+    })), []);
 
   if (settingsLoading) {
     return (
-      <div className="fixed inset-0 bg-white z-[9999] flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      <div className="fixed inset-0 bg-[#0E1729] z-[9999] flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#FF4500]"></div>
       </div>
     );
   }
 
-  const splashImageUrl = getSetting('splash_image_url') || 'https://images.unsplash.com/photo-1565299507177-b0ac66763828?q=80&w=800';
-  const logoUrl = getSetting('logo_url') || '';
-  const splashTitle = getSetting('splash_title') || 'مرحباً بك في السريع ون';
-  const splashSubtitle = getSetting('splash_subtitle') || 'أفضل خدمة توصيل طلبات بسرعة وأمان';
+  const logoUrl = getSetting('logo_url') || waselLogo;
+  const splashTitle = getSetting('splash_title') || 'السريع ون';
+  const splashSubtitle = getSetting('splash_subtitle') || 'نوصل لك بكل سرعة وأمان';
   const buttonText = getSetting('splash_button_text') || 'ابدأ الآن';
-  const appName = getSetting('app_name') || 'السريع ون';
 
   const handleStart = () => {
     setShow(false);
@@ -33,48 +92,197 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onFinish }) => {
 
   if (!show) {
     return (
-      <div className="fixed inset-0 bg-white z-[9999] transition-opacity duration-500 opacity-0 pointer-events-none" />
+      <div className="fixed inset-0 bg-[#0E1729] z-[9999] transition-opacity duration-500 opacity-0 pointer-events-none" />
     );
   }
 
   return (
-    <div className="fixed inset-0 bg-white z-[9999] flex flex-col transition-opacity duration-500 overflow-hidden">
-      {/* Top Image Section */}
-      <div className="h-[50vh] md:h-[55vh] relative overflow-hidden rounded-b-[3rem] md:rounded-b-[5rem] shadow-2xl">
-        <img 
-          src={splashImageUrl} 
-          alt="Splash" 
-          className="w-full h-full object-cover transition-transform duration-[20s] hover:scale-110"
-        />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-        
-        {logoUrl && (
-          <div className="absolute bottom-8 left-0 right-0 flex justify-center">
-            <img src={logoUrl} alt="Logo" className="h-20 md:h-28 object-contain drop-shadow-2xl" />
-          </div>
-        )}
+    <div className="fixed inset-0 z-[9999] flex flex-col transition-opacity duration-500 overflow-hidden bg-gradient-to-b from-[#0E1729] via-[#152033] to-[#0B1220]">
+      {/* خلفية شبكية متدرجة متحركة */}
+      <div className="absolute inset-0 splash-bg-mesh pointer-events-none" />
+
+      {/* خلفيات إشعاع كبيرة */}
+      <div className="absolute -top-32 -right-24 w-96 h-96 rounded-full bg-[#FF4500] opacity-25 blur-3xl animate-pulse" />
+      <div className="absolute -bottom-32 -left-24 w-[28rem] h-[28rem] rounded-full bg-[#FF6535] opacity-20 blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />
+      <div className="absolute top-1/3 left-1/4 w-64 h-64 rounded-full bg-[#FF4500] opacity-10 blur-3xl animate-pulse" style={{ animationDelay: '2s' }} />
+
+      {/* نجوم متلألئة منتشرة في الخلفية */}
+      <div className="absolute inset-0 pointer-events-none">
+        {twinkles.map((t) => (
+          <span
+            key={t.id}
+            className="absolute rounded-full bg-white splash-twinkle"
+            style={{
+              left: `${t.left}%`,
+              top: `${t.top}%`,
+              width: `${t.size}px`,
+              height: `${t.size}px`,
+              animationDelay: `${t.delay}s`,
+              boxShadow: '0 0 8px rgba(255,255,255,0.8)',
+            }}
+          />
+        ))}
       </div>
-      
-      {/* Content Section */}
-      <div className="flex-1 flex flex-col items-center justify-between p-8 md:p-12 text-center relative z-10 bg-white">
-        <div className="w-full max-w-md space-y-6 pt-4">
-          <h1 className="text-3xl md:text-5xl font-black text-gray-900 leading-tight tracking-tight">
-            {splashTitle}
+
+      {/* خطوط سرعة جانبية */}
+      <div className="absolute inset-0 overflow-hidden opacity-50 pointer-events-none">
+        <div className="absolute top-1/4 right-0 h-1 w-32 bg-gradient-to-l from-[#FF4500] to-transparent rounded-full splash-speed-line" />
+        <div className="absolute top-1/3 right-0 h-0.5 w-24 bg-gradient-to-l from-[#FF6535] to-transparent rounded-full splash-speed-line" style={{ animationDelay: '0.4s' }} />
+        <div className="absolute top-1/2 right-0 h-1 w-40 bg-gradient-to-l from-[#FF4500] to-transparent rounded-full splash-speed-line" style={{ animationDelay: '0.8s' }} />
+        <div className="absolute top-2/3 right-0 h-0.5 w-28 bg-gradient-to-l from-[#FF6535] to-transparent rounded-full splash-speed-line" style={{ animationDelay: '1.2s' }} />
+      </div>
+
+      {/* قسم الشعار */}
+      <div className="flex-1 flex flex-col items-center justify-center px-6 relative z-10">
+        <div className="relative">
+          {/* أشعة ضوئية تنبثق من الشعار */}
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div className="relative w-80 h-80">
+              {rays.map((ray) => (
+                <div
+                  key={ray.id}
+                  className="absolute top-1/2 left-1/2 origin-center splash-ray"
+                  style={{
+                    width: '2px',
+                    height: '180px',
+                    marginTop: '-90px',
+                    marginLeft: '-1px',
+                    background: 'linear-gradient(to top, transparent, #FF4500 60%, transparent)',
+                    transform: `rotate(${ray.angle}deg)`,
+                    animationDelay: `${ray.delay}s`,
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+
+          {/* موجات صدى متوسعة (sonar pulse) */}
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div className="absolute w-48 h-48 rounded-full border-2 border-[#FF4500] splash-pulse-ring" />
+            <div className="absolute w-48 h-48 rounded-full border-2 border-[#FF6535] splash-pulse-ring" style={{ animationDelay: '1s' }} />
+            <div className="absolute w-48 h-48 rounded-full border-2 border-[#FF4500] splash-pulse-ring" style={{ animationDelay: '2s' }} />
+          </div>
+
+          {/* الشعار + الهالة */}
+          <div className="relative splash-logo-enter">
+            {/* هالة توهج خلف الشعار */}
+            <div className="absolute inset-0 bg-[#FF4500] rounded-full blur-[80px] opacity-50 scale-90" />
+            <div className="absolute inset-0 bg-[#FF6535] rounded-full blur-[120px] opacity-30 scale-110" />
+
+            {/* 3 حلقات مدارية بسرعات مختلفة */}
+            <div className="absolute inset-0 -m-4 md:-m-6 rounded-full border-2 border-dashed border-[#FF4500]/50 splash-rotate-slow pointer-events-none" />
+            <div className="absolute inset-0 -m-10 md:-m-12 rounded-full border border-[#FF4500]/25 splash-rotate-reverse pointer-events-none" />
+            <div className="absolute inset-0 -m-16 md:-m-20 rounded-full border border-dotted border-[#FF6535]/20 splash-rotate-medium pointer-events-none" />
+
+            {/* الشعار مع تأثير اللمعان */}
+            <div className="relative w-64 h-64 md:w-80 md:h-80">
+              <img
+                src={logoUrl}
+                alt="السريع ون - Saree One"
+                className="relative w-full h-full object-contain drop-shadow-[0_25px_60px_rgba(255,69,0,0.65)] splash-float"
+                data-testid="img-splash-logo"
+              />
+              {/* طبقة لمعان تمر على الشعار */}
+              <div className="absolute inset-0 splash-shimmer rounded-full pointer-events-none" />
+            </div>
+
+            {/* نجوم تدور على الحلقة الداخلية */}
+            <div className="absolute inset-0 -m-4 md:-m-6 splash-rotate-slow pointer-events-none">
+              <span className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-[#FF4500] shadow-[0_0_15px_rgba(255,69,0,1)]" />
+              <span className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 w-2 h-2 rounded-full bg-white shadow-[0_0_12px_rgba(255,255,255,0.9)]" />
+              <span className="absolute top-1/2 right-0 -translate-y-1/2 translate-x-1/2 w-2 h-2 rounded-full bg-[#FF6535] shadow-[0_0_10px_rgba(242,96,64,0.9)]" />
+              <span className="absolute top-1/2 left-0 -translate-y-1/2 -translate-x-1/2 w-2 h-2 rounded-full bg-[#FF6535] shadow-[0_0_10px_rgba(242,96,64,0.9)]" />
+            </div>
+
+            {/* نجوم على الحلقة الخارجية تدور بعكس الاتجاه */}
+            <div className="absolute inset-0 -m-10 md:-m-12 splash-rotate-reverse pointer-events-none">
+              <span className="absolute top-1/4 right-0 w-1.5 h-1.5 rounded-full bg-white shadow-[0_0_8px_rgba(255,255,255,0.8)]" />
+              <span className="absolute bottom-1/4 left-0 w-1.5 h-1.5 rounded-full bg-[#FF4500] shadow-[0_0_8px_rgba(255,69,0,0.9)]" />
+            </div>
+          </div>
+
+          {/* جسيمات ذهبية تطفو حول الشعار */}
+          <div className="absolute inset-0 -m-32 pointer-events-none">
+            {particles.map((p) => (
+              <span
+                key={p.id}
+                className="absolute rounded-full splash-particle"
+                style={{
+                  left: `${p.left}%`,
+                  top: `${p.top}%`,
+                  width: `${p.size}px`,
+                  height: `${p.size}px`,
+                  background: p.hue,
+                  boxShadow: `0 0 ${p.size * 2}px ${p.hue}`,
+                  animationDelay: `${p.delay}s`,
+                  animationDuration: `${p.duration}s`,
+                }}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* العنوان والوصف */}
+        <div className="mt-12 text-center space-y-3 splash-text-enter">
+          {/* اسم العلامة - حروف تظهر واحداً واحداً */}
+          <h1
+            className="text-5xl md:text-6xl font-black text-white tracking-tight drop-shadow-[0_4px_20px_rgba(255,69,0,0.5)]"
+            data-testid="text-splash-title"
+            aria-label={splashTitle}
+          >
+            {splashTitle.split('').map((ch, i) => (
+              <span
+                key={i}
+                className="splash-letter"
+                style={{ animationDelay: `${1 + i * 0.12}s` }}
+              >
+                {ch === ' ' ? '\u00A0' : ch}
+              </span>
+            ))}
           </h1>
-          
-          <p className="text-lg md:text-xl font-medium text-gray-500 leading-relaxed max-w-[320px] md:max-w-md mx-auto">
+
+          <div className="flex items-center justify-center gap-2">
+            <span className="h-px w-10 bg-gradient-to-l from-transparent to-[#FF4500]" />
+            <p className="text-[#FF4500] text-xs md:text-sm font-bold tracking-[0.4em]">SAREE ONE</p>
+            <span className="h-px w-10 bg-gradient-to-r from-transparent to-[#FF4500]" />
+          </div>
+          <p className="text-base md:text-lg font-medium text-white/75 leading-relaxed max-w-[320px] md:max-w-md mx-auto pt-2">
             {splashSubtitle}
           </p>
         </div>
+      </div>
 
-        <div className="w-full max-w-sm pb-10 md:pb-16">
-          <Button 
+      {/* قسم الزر */}
+      <div className="w-full px-8 pb-10 md:pb-14 relative z-10 splash-button-enter">
+        <div className="max-w-sm mx-auto">
+          <Button
             onClick={handleStart}
-            className="w-full h-16 md:h-20 rounded-[2rem] text-xl md:text-2xl font-black bg-primary hover:bg-primary/90 text-white shadow-[0_20px_50px_rgba(236,72,20,0.3)] flex items-center justify-center gap-4 active:scale-95 transition-all group"
+            disabled={!ready}
+            data-testid="button-splash-start"
+            className="w-full h-16 md:h-[68px] rounded-2xl text-lg md:text-xl font-black bg-gradient-to-r from-[#FF4500] to-[#FF6535] hover:from-[#E89512] hover:to-[#FF4500] text-[#0E1729] shadow-[0_15px_40px_rgba(255,69,0,0.45)] flex items-center justify-center gap-3 active:scale-95 transition-all group disabled:opacity-70 disabled:cursor-not-allowed border border-white/10 relative overflow-hidden"
           >
-            {buttonText}
-            <ChevronLeft className="h-7 w-7 group-hover:-translate-x-2 transition-transform" />
+            {ready ? (
+              <>
+                <span className="relative z-10">{buttonText}</span>
+                <ChevronLeft className="h-6 w-6 group-hover:-translate-x-2 transition-transform relative z-10" />
+                {/* لمعان داخل الزر */}
+                <span className="absolute inset-0 splash-shimmer" />
+              </>
+            ) : (
+              <span className="flex items-center gap-2">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <span className="flex gap-1">
+                  <span className="splash-loading-dot inline-block w-1.5 h-1.5 rounded-full bg-[#0E1729]" style={{ animationDelay: '0s' }} />
+                  <span className="splash-loading-dot inline-block w-1.5 h-1.5 rounded-full bg-[#0E1729]" style={{ animationDelay: '0.2s' }} />
+                  <span className="splash-loading-dot inline-block w-1.5 h-1.5 rounded-full bg-[#0E1729]" style={{ animationDelay: '0.4s' }} />
+                </span>
+                <span>جاري التحميل</span>
+              </span>
+            )}
           </Button>
+          <p className="text-center text-white/40 text-xs mt-4 font-medium tracking-wide">
+            © 2026 السريع ون · جميع الحقوق محفوظة
+          </p>
         </div>
       </div>
     </div>
