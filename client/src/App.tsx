@@ -16,8 +16,9 @@ import AdminLoginPage from "./pages/admin/AdminLoginPage";
 import DriverLoginPage from "./pages/driver/DriverLoginPage";
 import AdminApp from "./pages/AdminApp";
 import DriverAppPage from "./pages/driver/DriverApp";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useSettingsSync } from "./hooks/useSettingsSync";
+import { prefetchBootstrap } from "./lib/bootstrap";
 import HomePage from "./pages/HomePage";
 import RestaurantPage from "./pages/RestaurantPage";
 import Cart from "./pages/Cart";
@@ -46,7 +47,16 @@ function MainApp() {
     return localStorage.getItem('is_guest') === 'true';
   });
 
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
+
+  // Pre-warm caches on cold start (covers users who already saw splash this session)
+  useEffect(() => {
+    if (!showSplash) {
+      const phone = user?.phone || localStorage.getItem('customer_phone') || '';
+      const customerId = user?.id || '';
+      prefetchBootstrap({ phone, customerId });
+    }
+  }, [showSplash, user?.id, user?.phone]);
 
   // Handle splash finish
   const handleSplashFinish = () => {
@@ -61,13 +71,19 @@ function MainApp() {
 
   const isAdminRoute = currentLocation.startsWith('/admin');
   const isDriverRoute = currentLocation.startsWith('/driver');
+  const needsRedirectToAuth = !isAuthenticated && !isGuest && !isAuthPage && !isAdminRoute && !isDriverRoute;
+
+  useEffect(() => {
+    if (needsRedirectToAuth) {
+      setLocation('/auth');
+    }
+  }, [needsRedirectToAuth]);
 
   if (showSplash && !isAdminRoute && !isDriverRoute && !isAuthPage) {
     return <SplashScreen onFinish={handleSplashFinish} />;
   }
 
-  if (!isAuthenticated && !isGuest && !isAuthPage && !currentLocation.startsWith('/admin') && !currentLocation.startsWith('/driver')) {
-    setLocation('/auth');
+  if (needsRedirectToAuth) {
     return null;
   }
 
@@ -118,6 +134,8 @@ import CategoryPage from "./pages/CategoryPage";
 import ProductDetails from "./pages/ProductDetails";
 import CustomerAuthPage from "./pages/CustomerAuthPage";
 import Favorites from "./pages/Favorites";
+import CustomerAddresses from "./pages/CustomerAddresses";
+import WasalniPage from "./pages/WasalniPage";
 
 function Router() {
   // Check UiSettings for page visibility
@@ -139,10 +157,11 @@ function Router() {
       <Route path="/addresses" component={Location} />
       <Route path="/orders" component={OrdersPage} />
       <Route path="/orders/:orderId" component={OrderTrackingPage} />
-      <Route path="/order-tracking/:orderId" component={OrderTrackingPage} />
       {showTrackOrdersPage && <Route path="/track-orders" component={TrackOrdersPage} />}
+      <Route path="/my-addresses" component={CustomerAddresses} />
       <Route path="/settings" component={Settings} />
       <Route path="/privacy" component={Privacy} />
+      <Route path="/wasalni" component={WasalniPage} />
       
       {/* Authentication Routes */}
       <Route path="/admin-login" component={AdminLoginPage} />
