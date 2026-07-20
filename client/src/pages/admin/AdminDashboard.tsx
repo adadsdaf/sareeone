@@ -1,11 +1,10 @@
-import React, { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import React, { useState, useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { NotificationSystem } from '@/components/NotificationSystem';
 import { 
   BarChart3, 
   Users, 
@@ -30,6 +29,7 @@ import AdvancedReports from '@/pages/admin/AdvancedReports';
 export default function AdminDashboard() {
   const { user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState('overview');
+  const queryClient = useQueryClient();
 
   const { data: dashboardData, isLoading } = useQuery({
     queryKey: ['/api/admin/dashboard'],
@@ -37,8 +37,37 @@ export default function AdminDashboard() {
       const response = await apiRequest('GET', '/api/admin/dashboard');
       return response.json();
     },
-    refetchInterval: 30000, // تحديث كل 30 ثانية
+    refetchInterval: 15000,
   });
+
+  // تحديث فوري عبر WebSocket عند وجود تغييرات
+  useEffect(() => {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    let ws: WebSocket | null = null;
+    let reconnect: any;
+
+    const connect = () => {
+      ws = new WebSocket(wsUrl);
+      ws.onopen = () => {
+        ws?.send(JSON.stringify({ type: 'auth', payload: { userId: 'admin_dashboard', userType: 'admin' } }));
+      };
+      ws.onmessage = (e) => {
+        try {
+          const msg = JSON.parse(e.data);
+          if (['order_update', 'new_order', 'order_status_changed', 'new_wasalni_request', 'NEW_NOTIFICATION', 'settings_changed'].includes(msg.type)) {
+            queryClient.invalidateQueries({ queryKey: ['/api/admin/dashboard'] });
+            queryClient.invalidateQueries({ queryKey: ['/api/admin/orders'] });
+            queryClient.invalidateQueries({ queryKey: ['/api/restaurant-accounts'] });
+          }
+        } catch {}
+      };
+      ws.onclose = () => { reconnect = setTimeout(connect, 5000); };
+      ws.onerror = () => ws?.close();
+    };
+    connect();
+    return () => { if (reconnect) clearTimeout(reconnect); ws?.close(); };
+  }, [queryClient]);
 
   const handleLogout = () => {
     logout();
@@ -295,7 +324,7 @@ export default function AdminDashboard() {
                         <div className="text-left">
                           <p className="font-medium">{formatCurrency(order.total || 0)}</p>
                           <p className="text-xs text-gray-500">
-                            {order.items ? (() => { try { const items = typeof order.items === 'string' ? JSON.parse(order.items) : order.items; return Array.isArray(items) ? items.length : 0; } catch { return 0; } })() : 0} عنصر
+                            {order.items ? JSON.parse(order.items).length : 0} عنصر
                           </p>
                         </div>
                         <Badge variant={

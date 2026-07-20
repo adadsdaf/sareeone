@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useLocation } from 'wouter';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Package, CheckCircle, XCircle, Phone, MapPin, Filter, Navigation, Search, Truck, AlertCircle, Clock, User, Edit, DollarSign, Plus, Minus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -21,6 +22,7 @@ interface EditableItem {
 }
 
 export default function AdminOrders() {
+  const [, setAdminLocation] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -53,15 +55,21 @@ export default function AdminOrders() {
     ws.onopen = () => {
       ws.send(JSON.stringify({
         type: 'auth',
-        payload: { userId: 'admin_dashboard' }
+        payload: { userId: 'admin_dashboard', userType: 'admin' }
       }));
     };
 
     ws.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data);
-        if (message.type === 'order_update' || message.type === 'driver_assigned') {
+        const liveEvents = [
+          'order_update', 'driver_assigned', 'new_order',
+          'order_status_changed', 'new_wasalni_request', 'NEW_NOTIFICATION',
+          'driver_status_update'
+        ];
+        if (liveEvents.includes(message.type)) {
           queryClient.invalidateQueries({ queryKey: ['/api/orders'] });
+          queryClient.invalidateQueries({ queryKey: ['/api/drivers'] });
         }
       } catch (err) {
         console.error('Failed to parse WS message:', err);
@@ -244,6 +252,49 @@ export default function AdminOrders() {
     return labels[currentStatus as keyof typeof labels];
   };
 
+  // دالة لحساب المسافة بالكم بين نقطتين
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371; // نصف قطر الأرض بالكم
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  };
+
+  const getNearestDriver = (order: Order) => {
+    if (!drivers || drivers.length === 0 || !order.restaurantLatitude || !order.restaurantLongitude) return null;
+    
+    const availableDrivers = drivers.filter(d => d.isAvailable && d.latitude && d.longitude);
+    if (availableDrivers.length === 0) return null;
+
+    let nearest = availableDrivers[0];
+    let minDistance = calculateDistance(
+      parseFloat(order.restaurantLatitude), 
+      parseFloat(order.restaurantLongitude),
+      parseFloat(nearest.latitude!),
+      parseFloat(nearest.longitude!)
+    );
+
+    availableDrivers.forEach(driver => {
+      const dist = calculateDistance(
+        parseFloat(order.restaurantLatitude!),
+        parseFloat(order.restaurantLongitude!),
+        parseFloat(driver.latitude!),
+        parseFloat(driver.longitude!)
+      );
+      if (dist < minDistance) {
+        minDistance = dist;
+        nearest = driver;
+      }
+    });
+
+    return { driver: nearest, distance: minDistance.toFixed(2) };
+  };
+
   const filteredOrders = orders?.filter(order => {
     if (statusFilter === 'all') return true;
     return order.status === statusFilter;
@@ -264,10 +315,19 @@ export default function AdminOrders() {
       <div className="sticky top-0 z-20 bg-white border-b shadow-sm px-6 py-4">
         <div className="flex items-center gap-3">
           <Package className="h-7 w-7 text-primary" />
-          <div>
+          <div className="flex-1">
             <h1 className="text-xl font-bold text-foreground">إدارة الطلبات</h1>
             <p className="text-sm text-muted-foreground">متابعة وإدارة جميع الطلبات</p>
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setAdminLocation('/admin/driver-tracking')}
+            className="gap-2"
+          >
+            <Navigation className="h-4 w-4" />
+            تتبع السائقين المباشر
+          </Button>
         </div>
       </div>
 
@@ -390,7 +450,7 @@ export default function AdminOrders() {
                           <div>
                             <CardTitle className="text-lg">طلب #{order.orderNumber || order.id.slice(0,8)}</CardTitle>
                             <p className="text-sm text-muted-foreground">
-                              {formatDate(order.createdAt)}
+                              {formatDate(order.createdAt)} - {new Date(order.createdAt).toLocaleTimeString('ar-YE', { hour: '2-digit', minute: '2-digit' })}
                             </p>
                           </div>
                         </div>
@@ -498,6 +558,31 @@ export default function AdminOrders() {
                               </Badge>
                             )}
                           </div>
+
+                          {!order.driverId && getNearestDriver(order) && (
+                            <div className="mb-3 p-2 bg-yellow-100 border border-yellow-200 rounded text-xs flex items-center justify-between">
+                              <span className="flex items-center gap-1 text-yellow-800">
+                                <Navigation className="h-3 w-3" />
+                                السائق الأقرب للمطعم: <strong>{getNearestDriver(order)?.driver.name}</strong> 
+                                ({getNearestDriver(order)?.distance} كم)
+                              </span>
+                              <Button 
+                                size="xs" 
+                                variant="outline" 
+                                className="h-6 text-[10px] border-yellow-400 text-yellow-800 hover:bg-yellow-200"
+                                onClick={() => {
+                                  const nearest = getNearestDriver(order)?.driver;
+                                  if (nearest) {
+                                    setAssigningOrderId(order.id);
+                                    setSelectedDriver(prev => ({ ...prev, [order.id]: nearest.id }));
+                                  }
+                                }}
+                              >
+                                اختياره
+                              </Button>
+                            </div>
+                          )}
+
                           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 w-full">
                             <Select 
                               value={assigningOrderId === order.id ? (selectedDriver[order.id] || '') : (order.driverId || '')} 

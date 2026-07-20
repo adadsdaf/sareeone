@@ -179,6 +179,21 @@ export default function HomePage() {
               </span>
             </div>
 
+            {/* خدمة وصل لي في شريط التصنيفات */}
+            {showSection('show_wasalni_service') && (
+              <div
+                className="flex flex-col items-center gap-1.5 cursor-pointer shrink-0 min-w-[70px]"
+                onClick={() => setLocation('/wasalni')}
+              >
+                <div className="w-16 h-16 rounded-2xl flex items-center justify-center border-2 bg-gradient-to-br from-orange-400 to-orange-600 border-transparent shadow-sm">
+                  <span className="text-2xl">🛵</span>
+                </div>
+                <span className="text-[11px] font-bold text-center leading-tight text-orange-600">
+                  {getS('wasalni_service_name', 'وصل لي')}
+                </span>
+              </div>
+            )}
+
             {categories?.filter(c => c.isActive !== false).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)).map(cat => (
               <div
                 key={cat.id}
@@ -203,10 +218,10 @@ export default function HomePage() {
       )}
 
       {/* ── Offers Slider ───────────────────────────────────────────────────── */}
-      {showSection('show_hero_section') && (
+      {/* ✅ يختفي صندوق العروض كلياً إن لم تكن هناك عروض فعّالة لعرضها */}
+      {showSection('show_hero_section') && activeOffers.length > 0 && currentOffer && (
         <div className="px-4 pt-4 pb-2">
-          {activeOffers.length > 0 && currentOffer ? (
-            <div className="relative w-full rounded-2xl overflow-hidden shadow-md" style={{ height: activeOffers.length === 1 ? '200px' : '180px' }}>
+          <div className="relative w-full rounded-2xl overflow-hidden shadow-md" style={{ height: activeOffers.length === 1 ? '200px' : '180px' }}>
               {/* Image */}
               {currentOffer.image
                 ? <img src={currentOffer.image} alt={currentOffer.title} className="w-full h-full object-cover" />
@@ -244,10 +259,12 @@ export default function HomePage() {
                   <button
                     className="bg-white text-primary text-[11px] font-black px-4 py-1.5 rounded-full flex items-center gap-1 shadow"
                     onClick={() => {
-                      if (currentOffer.menuItemId) {
+                      // الأولوية للمتجر المرتبط (الانتقال إلى صفحة المتجر مباشرةً)
+                      if (currentOffer.restaurantId) {
+                        const hash = currentOffer.menuItemId ? `#product-${currentOffer.menuItemId}` : '';
+                        setLocation(`/restaurant/${currentOffer.restaurantId}${hash}`);
+                      } else if (currentOffer.menuItemId) {
                         setLocation(`/category/العروض#product-${currentOffer.menuItemId}`);
-                      } else if (currentOffer.restaurantId) {
-                        setLocation(`/restaurant/${currentOffer.restaurantId}`);
                       } else {
                         setLocation('/category/العروض');
                       }
@@ -304,26 +321,6 @@ export default function HomePage() {
                 </>
               )}
             </div>
-          ) : activeOffers.length === 0 ? (
-            /* Fallback when DB has no offers */
-            <div
-              className="relative w-full h-36 rounded-2xl overflow-hidden cursor-pointer shadow"
-              onClick={() => setLocation('/category/العروض')}
-            >
-              <div className="absolute inset-0 orange-gradient p-4 text-white flex flex-col justify-between">
-                <div>
-                  <div className="bg-white/25 px-2.5 py-1 rounded-full text-[11px] font-bold inline-block mb-2">عرض خاص</div>
-                  <h3 className="text-sm font-black leading-snug">{getS('offer_banner_1_title', 'عروض حصرية يومية للتوصيل')}</h3>
-                </div>
-                <div>
-                  <p className="text-[11px] text-white/85 mb-2">{getS('offer_banner_1_subtitle', 'اطلب الآن واستمتع بأسرع توصيل')}</p>
-                  <div className="bg-white text-primary text-[11px] font-black px-4 py-1.5 rounded-full inline-flex items-center gap-1">
-                    {getS('btn_shop_now', 'تسوق الآن')}<ChevronLeft className="h-3 w-3" />
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : null}
         </div>
       )}
 

@@ -49,6 +49,8 @@ interface Order {
   totalAmount: string;
   estimatedTime?: string;
   driverEarnings: string;
+  driverCommissionRate?: number | string;
+  driverCommissionAmount?: string;
   restaurantId: string;
   restaurantName?: string;
   restaurantPhone?: string;
@@ -273,8 +275,12 @@ export default function OrderDetailsPage({ orderId, driverId, onBack }: OrderDet
             </div>
             <div className="flex gap-4 text-sm">
               <div>
-                <p className="text-gray-600">عمولتك (70%)</p>
-                <p className="font-bold text-lg text-green-700">{formatCurrency(order.driverEarnings)}</p>
+                <p className="text-gray-600">
+                  عمولتك ({order.driverCommissionRate ? `${parseFloat(String(order.driverCommissionRate)).toFixed(0)}%` : '—'})
+                </p>
+                <p className="font-bold text-lg text-green-700">
+                  {formatCurrency(order.driverCommissionAmount || order.driverEarnings)}
+                </p>
               </div>
               <div>
                 <p className="text-gray-600">رسم التوصيل</p>
@@ -542,7 +548,7 @@ export default function OrderDetailsPage({ orderId, driverId, onBack }: OrderDet
           <CardContent className="space-y-3">
             <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
               <span className="text-gray-600">وقت الطلب</span>
-              <span className="font-medium">{formatDate(order.createdAt)}</span>
+              <span className="font-medium">{formatDate(order.createdAt)} - {new Date(order.createdAt).toLocaleTimeString('ar-YE', { hour: '2-digit', minute: '2-digit' })}</span>
             </div>
             {order.estimatedTime && (
               <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">

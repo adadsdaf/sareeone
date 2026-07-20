@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useLocation } from 'wouter';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { ArrowRight, Trash2, MapPin, Tag, CheckCircle, XCircle, Loader2, AlertCircle } from 'lucide-react';
+import { ArrowRight, Trash2, MapPin, Tag, CheckCircle, XCircle, Loader2, AlertCircle, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -15,12 +15,16 @@ import { apiRequest } from '@/lib/queryClient';
 import type { InsertOrder, Restaurant } from '@shared/schema';
 import { getAppStatus, getRestaurantStatus } from '@/utils/restaurantHours';
 import { formatCurrency } from '@/lib/utils';
+import AppClosedOverlay from '@/components/AppClosedOverlay';
+import ScheduledOrderDialog from '@/components/ScheduledOrderDialog';
+import { useAuth } from '@/context/AuthContext';
 
 export default function CartPage() {
   const [, setLocation] = useLocation();
   const { state, removeItem, updateQuantity, clearCart, setDeliveryFee } = useCart();
   const { items, subtotal, total, deliveryFee } = state;
   const { toast } = useToast();
+  const { user } = useAuth();
   const { location: userLocation, getCurrentLocation } = useCoordinates();
   const [calculatingFee, setCalculatingFee] = useState(false);
   const [deliveryInfo, setDeliveryInfo] = useState<{
@@ -28,6 +32,11 @@ export default function CartPage() {
     estimatedTime: string;
     isFreeDelivery: boolean;
   } | null>(null);
+
+  const [showAppClosedOverlay, setShowAppClosedOverlay] = useState(false);
+  const [appClosedMessage, setAppClosedMessage] = useState('');
+  const [showScheduledDialog, setShowScheduledDialog] = useState(false);
+  const [scheduledData, setScheduledData] = useState<{date: string, time: string} | null>(null);
 
   const restaurantId = items[0]?.restaurantId;
 
@@ -62,7 +71,9 @@ export default function CartPage() {
   const canPlaceOrder = appStatus.isOpen && (restaurantStatus === null || restaurantStatus.isOpen);
 
   // إعدادات السلة من لوحة التحكم
-  const showCouponBox = getSetting('show_coupon_box_always', 'true') !== 'false';
+  const showCouponBoxAlways = getSetting('show_coupon_box_always', 'true') !== 'false';
+  const couponMinOrderValue = parseFloat(getSetting('coupon_min_order_value', '0') || '0');
+  const showCouponBox = showCouponBoxAlways || (couponMinOrderValue > 0 && subtotal >= couponMinOrderValue);
   const showPaymentCards = getSetting('show_payment_cards', 'true') !== 'false';
   const showCashPayment = getSetting('show_cash_payment', 'true') !== 'false';
   const showBankTransfer = getSetting('show_bank_transfer', 'false') === 'true';
@@ -211,6 +222,18 @@ export default function CartPage() {
     paymentMethod: availablePaymentMethods[0]?.value || 'cash',
   });
 
+  // ملء الحقول تلقائياً ببيانات العميل المسجل لضمان وصول الإشعارات والتتبع
+  useEffect(() => {
+    if (user) {
+      setOrderForm(prev => ({
+        ...prev,
+        customerName: prev.customerName || user.name || '',
+        customerPhone: prev.customerPhone || user.phone || '',
+        customerEmail: prev.customerEmail || (user as any).email || '',
+      }));
+    }
+  }, [user]);
+
   // تحديث طريقة الدفع الافتراضية عند تغيّر القائمة المتاحة
   useEffect(() => {
     if (availablePaymentMethods.length > 0) {
@@ -239,23 +262,38 @@ export default function CartPage() {
       const raw = error?.message || '';
       const serverMsg = raw.includes(':') ? raw.split(':').slice(1).join(':').trim() : raw;
       let displayMsg = "يرجى المحاولة مرة أخرى";
+      let errorCode = "";
+      
       try {
         const parsed = JSON.parse(serverMsg);
         displayMsg = parsed.error || parsed.message || displayMsg;
+        errorCode = parsed.code || "";
       } catch {
         if (serverMsg) displayMsg = serverMsg;
       }
+      
+      if (errorCode === "APP_CLOSED") {
+        setAppClosedMessage(displayMsg);
+        setShowAppClosedOverlay(true);
+        return;
+      }
+      
       toast({ title: "خطأ في تأكيد الطلب", description: displayMsg, variant: "destructive" });
     },
   });
 
   const handlePlaceOrder = () => {
     if (!canPlaceOrder) {
-      toast({
-        title: "لا يمكن إتمام الطلب",
-        description: !appStatus.isOpen ? appStatus.message : (restaurantStatus?.message || 'المتجر مغلق حالياً'),
-        variant: "destructive",
-      });
+      if (!appStatus.isOpen) {
+        setAppClosedMessage(appStatus.message);
+        setShowAppClosedOverlay(true);
+      } else {
+        toast({
+          title: "المطعم مغلق",
+          description: restaurantStatus?.message || 'المطعم مغلق حالياً، يرجى تجربة مطعم آخر أو المحاولة لاحقاً',
+          variant: "destructive",
+        });
+      }
       return;
     }
 
@@ -269,11 +307,14 @@ export default function CartPage() {
       return;
     }
 
-    const orderData: InsertOrder = {
+    const orderData: InsertOrder & { customerId?: string } = {
       orderNumber: `ORD${Date.now()}`,
       customerName: orderForm.customerName,
-      customerPhone: orderForm.customerPhone,
+      // استخدم رقم هاتف الحساب المسجّل عند توفره لضمان تطابق المُعرّف مع الإشعارات والتتبع
+      customerPhone: (user?.phone || orderForm.customerPhone).trim(),
       customerEmail: orderForm.customerEmail || undefined,
+      // تمرير معرّف الحساب لربط الطلب والإشعارات بحساب العميل المسجّل
+      customerId: user?.id || undefined,
       deliveryAddress: orderForm.deliveryAddress,
       notes: orderForm.notes || undefined,
       paymentMethod: orderForm.paymentMethod,
@@ -283,10 +324,19 @@ export default function CartPage() {
       total: finalTotal.toString(),
       totalAmount: finalTotal.toString(),
       restaurantId: items[0]?.restaurantId || undefined,
-      customerLocationLat: userLocation.position?.coords.latitude.toString(),
-      customerLocationLng: userLocation.position?.coords.longitude.toString(),
+      customerLocationLat: userLocation.position?.coords.latitude
+        ? parseFloat(userLocation.position.coords.latitude.toFixed(8)).toString()
+        : undefined,
+      customerLocationLng: userLocation.position?.coords.longitude
+        ? parseFloat(userLocation.position.coords.longitude.toFixed(8)).toString()
+        : undefined,
       status: 'pending',
     };
+
+    // حفظ رقم الهاتف لاسترجاع الطلبات لاحقاً (للزوار وللعملاء معاً)
+    if (orderData.customerPhone) {
+      try { localStorage.setItem('customer_phone', orderData.customerPhone); } catch (_) {}
+    }
 
     placeOrderMutation.mutate(orderData);
   };
@@ -565,22 +615,16 @@ export default function CartPage() {
 
             <Button
               onClick={handlePlaceOrder}
-              disabled={placeOrderMutation.isPending || calculatingFee || !userLocation.position || !canPlaceOrder}
-              className={`w-full mt-6 py-4 text-lg font-bold ${!canPlaceOrder ? 'bg-gray-400 hover:bg-gray-400 cursor-not-allowed' : ''}`}
+              disabled={placeOrderMutation.isPending || calculatingFee}
+              className="w-full mt-6 py-4 text-lg font-bold"
               data-testid="button-place-order"
             >
               {placeOrderMutation.isPending ? (
                 <span className="flex items-center gap-2">
                   <i className="fas fa-spinner fa-spin"></i> جاري تأكيد الطلب...
                 </span>
-              ) : !canPlaceOrder ? (
-                <span className="flex items-center gap-2">
-                  🔒 {!appStatus.isOpen ? 'التطبيق مغلق حالياً' : 'المتجر مغلق حالياً'}
-                </span>
               ) : calculatingFee ? (
                 'جاري حساب رسوم التوصيل...'
-              ) : !userLocation.position ? (
-                'يرجى تحديد الموقع لإكمال الطلب'
               ) : (
                 checkoutButtonText
               )}
@@ -592,6 +636,62 @@ export default function CartPage() {
           </Card>
         )}
       </section>
+
+      {/* المنبثقات */}
+      {showAppClosedOverlay && (
+        <AppClosedOverlay
+          openingTime={getSetting('opening_time', '08:00')}
+          closingTime={getSetting('closing_time', '23:00')}
+          message={appClosedMessage}
+          onClose={() => setShowAppClosedOverlay(false)}
+          onScheduleOrder={(date, time) => {
+            setScheduledData({ date, time });
+            setShowAppClosedOverlay(false);
+            setShowScheduledDialog(true);
+          }}
+        />
+      )}
+
+      {showScheduledDialog && scheduledData && (
+        <ScheduledOrderDialog
+          isOpen={showScheduledDialog}
+          onClose={() => setShowScheduledDialog(false)}
+          onConfirm={(data) => {
+            // تنفيذ الطلب المجدول
+            const orderData: InsertOrder = {
+              orderNumber: `ORD${Date.now()}`,
+              customerName: orderForm.customerName,
+              customerPhone: orderForm.customerPhone,
+              customerEmail: orderForm.customerEmail || undefined,
+              deliveryAddress: orderForm.deliveryAddress,
+              notes: orderForm.notes || undefined,
+              paymentMethod: orderForm.paymentMethod,
+              items: JSON.stringify(items),
+              subtotal: subtotal.toString(),
+              deliveryFee: deliveryFee.toString(),
+              total: finalTotal.toString(),
+              totalAmount: finalTotal.toString(),
+              restaurantId: items[0]?.restaurantId || undefined,
+              customerLocationLat: userLocation.position?.coords.latitude
+                ? parseFloat(userLocation.position.coords.latitude.toFixed(8)).toString()
+                : undefined,
+              customerLocationLng: userLocation.position?.coords.longitude
+                ? parseFloat(userLocation.position.coords.longitude.toFixed(8)).toString()
+                : undefined,
+              status: 'scheduled',
+              deliveryPreference: 'scheduled',
+              scheduledDate: data.date,
+              scheduledTimeSlot: data.timeSlot || data.time,
+              isScheduled: true,
+              scheduledDateTime: new Date(`${data.date}T${data.time || '00:00'}`)
+            };
+            placeOrderMutation.mutate(orderData);
+            setShowScheduledDialog(false);
+          }}
+          initialDate={scheduledData.date}
+          initialTime={scheduledData.time}
+        />
+      )}
     </div>
   );
 }

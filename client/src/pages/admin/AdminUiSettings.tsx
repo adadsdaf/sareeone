@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { 
   Save, Settings, Eye, Image as ImageIcon, Smartphone, Truck, 
   MessageCircle, Phone, Share2, Lock, ShoppingCart, Star, Bell,
-  ChevronDown, ChevronRight, Hash, Globe
+  ChevronDown, ChevronRight, Hash, Globe, Bike
 } from 'lucide-react';
 import ImageUpload from '@/components/ImageUpload';
 import { Button } from '@/components/ui/button';
@@ -249,6 +249,16 @@ export default function AdminUiSettings() {
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['/api/admin/ui-settings'] });
+      
+      // إرسال تحديث عبر WebSocket لإجبار التطبيقات على تحديث الإعدادات لحظياً
+      const ws = (window as any).WS_MANAGER || (globalThis as any).WS_MANAGER;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'settings_update',
+          payload: { key: variables.key, value: variables.value }
+        }));
+      }
+
       setPendingChanges(prev => {
         const newChanges = { ...prev };
         delete newChanges[variables.key];
@@ -470,6 +480,12 @@ export default function AdminUiSettings() {
                 description="إظهار حقل إدخال كود الخصم دائمًا في صفحة السلة"
               />
               <SettingRow
+                label="الحد الأدنى لإظهار صندوق الكوبون"
+                {...rowProps('coupon_min_order_value')}
+                placeholder="0"
+                description="أدخل قيمة الحد الأدنى للطلب لإظهار حقل الكوبون (0 = دائمًا). مثال: 50 يعني يظهر فقط إذا قيمة الطلب 50 أو أكثر"
+              />
+              <SettingRow
                 label="إظهار طرق الدفع الإلكترونية"
                 {...rowProps('show_payment_cards')}
                 type="boolean"
@@ -501,6 +517,34 @@ export default function AdminUiSettings() {
               />
             </SectionCard>
 
+            {/* خدمة وصل لي */}
+            <SectionCard {...secProps('wasalni')} title="إعدادات خدمة وصل لي" icon={Bike} color="text-orange-600">
+              <div className="py-2">
+                <div className="bg-orange-50 rounded-lg p-3 text-xs text-orange-700 mb-2">
+                  💡 هذه الإعدادات تتحكم في خدمة التوصيل الخاص (وصل لي) التي تظهر في شريط التصنيفات
+                </div>
+              </div>
+              <SettingRow
+                label="إظهار خدمة وصل لي"
+                {...rowProps('show_wasalni_service')}
+                type="boolean"
+                description="تفعيل أو تعطيل الخدمة في التطبيق بالكامل"
+              />
+              <SettingRow
+                label="اسم الخدمة"
+                {...rowProps('wasalni_service_name')}
+                placeholder="وصل لي"
+                description="الاسم الذي يظهر للمستخدم في شريط التصنيفات"
+              />
+              <SettingRow
+                label="رسوم التوصيل الأساسية (ريال)"
+                {...rowProps('wasalni_base_fee')}
+                placeholder="5"
+                description="رسوم الخدمة التي تظهر بشكل افتراضي للعميل"
+                type="number"
+              />
+            </SectionCard>
+
             {/* صفحات التطبيق */}
             <SectionCard {...secProps('navigation')} title="صفحات التطبيق (إظهار/إخفاء)" icon={Eye} color="text-orange-600">
               <SettingRow label="صفحة الطلبات" {...rowProps('show_orders_page')} type="boolean" description="عرض صفحة قائمة الطلبات" />
@@ -509,6 +553,8 @@ export default function AdminUiSettings() {
               <SettingRow label="قسم التصنيفات" {...rowProps('show_categories')} type="boolean" description="عرض شبكة التصنيفات" />
               <SettingRow label="قسم البانر الرئيسي" {...rowProps('show_hero_section')} type="boolean" description="عرض شريط العروض المتحرك" />
               <SettingRow label="قسم المنتجات المميزة" {...rowProps('show_featured_products')} type="boolean" description="عرض المنتجات الجديدة/المميزة" />
+              <SettingRow label="خدمة وصل لي" {...rowProps('show_wasalni_service')} type="boolean" description="إظهار بانر خدمة وصل لي في الرئيسية" />
+              <SettingRow label="رسوم خدمة وصل لي" {...rowProps('wasalni_base_fee')} placeholder="500" description="رسوم التوصيل الافتراضية لخدمة وصل لي" />
               <SettingRow label="الشريط السفلي" {...rowProps('bottom_bar_enabled')} type="boolean" description="إظهار شريط التنقل السفلي" />
             </SectionCard>
           </TabsContent>
@@ -671,6 +717,24 @@ export default function AdminUiSettings() {
                 <SettingRow label="الحد الأدنى للطلب (ريال)" {...rowProps('minimum_order_default')} placeholder="20" description="أقل قيمة للطلب يمكن قبولها" />
                 <SettingRow label="وقت الفتح" {...rowProps('opening_time')} placeholder="08:00" description="وقت فتح المتجر يومياً" />
                 <SettingRow label="وقت الإغلاق" {...rowProps('closing_time')} placeholder="23:00" description="وقت إغلاق المتجر يومياً" />
+              </CardContent>
+            </Card>
+
+            {/* إعدادات ساعات الموصلين والطلبات المؤجلة */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Truck className="h-5 w-5 text-orange-500" />
+                  ساعات دوام الموصلين والطلبات المؤجلة
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="divide-y divide-gray-100">
+                <div className="py-3 bg-orange-50 rounded-lg px-3 mb-2 text-sm text-orange-700">
+                  💡 عندما يحاول العميل الطلب خارج ساعات الموصلين، يظهر له خيار جدولة الطلب لوقت متاح.
+                </div>
+                <SettingRow label="بداية دوام الموصلين" {...rowProps('driver_start_time')} placeholder="09:00" description="الوقت الذي يبدأ فيه الموصلون العمل (مثال: 09:00)" />
+                <SettingRow label="نهاية دوام الموصلين" {...rowProps('driver_end_time')} placeholder="21:00" description="الوقت الذي ينتهي فيه دوام الموصلين (مثال: 21:00)" />
+                <SettingRow label="تفعيل الطلبات المؤجلة" {...rowProps('enable_scheduled_orders')} type="boolean" description="السماح للعملاء بجدولة طلباتهم خارج ساعات الموصلين" />
               </CardContent>
             </Card>
 
