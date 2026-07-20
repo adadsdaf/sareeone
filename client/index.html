@@ -4,18 +4,42 @@
     <meta charset="UTF-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover"
     />
-    <title>السريع ون - توصيل سريع للخضار والفواكه</title>
+    <title>السريع ون - توصيل سريع</title>
     <meta name="description" content="أفضل الخضار والفواكه الطازجة توصل لبابك - السريع ون" />
-    <meta name="theme-color" content="#f97316" />
-    <link rel="manifest" href="/manifest.json" />
+    <!-- ✅ توحيد لون الثيم مع لون الشريط العلوي للتطبيق -->
+    <meta name="theme-color" content="#E8380D" />
+    <meta name="msapplication-navbutton-color" content="#E8380D" />
     <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
     <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
+    <!-- ✅ تشغيل وضع التطبيق المستقل وإخفاء شريط العنوان في المتصفحات/التطبيقات -->
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="السريع ون" />
+    <!-- ✅ اختيار ملف PWA المناسب ديناميكياً حسب نوع التطبيق (عميل/سائق/إدارة) -->
+    <script>
+      (function () {
+        var path = window.location.pathname || '/';
+        var manifestUrl = '/manifest.json';
+        var titleMeta = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+        if (path.indexOf('/admin') === 0) {
+          manifestUrl = '/manifest-admin.json';
+          if (titleMeta) titleMeta.setAttribute('content', 'لوحة التحكم - السريع ون');
+          document.title = 'لوحة التحكم - السريع ون';
+        } else if (path.indexOf('/driver') === 0) {
+          manifestUrl = '/manifest-driver.json';
+          if (titleMeta) titleMeta.setAttribute('content', 'السائق - السريع ون');
+          document.title = 'السائق - السريع ون';
+        }
+        var link = document.createElement('link');
+        link.rel = 'manifest';
+        link.href = manifestUrl;
+        document.head.appendChild(link);
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
